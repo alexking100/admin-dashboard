@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin · Tasks</title>
+<style>
+  /* ── Reset & base ─────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:        #f5f5f7;
+    --card:      #ffffff;
+    --border:    #e0e0e5;
+    --accent:    #0071e3;
+    --accent-h:  #005bbf;
+    --done-bg:   #f0fdf4;
+    --done-txt:  #16a34a;
+    --muted:     #6e6e73;
+    --danger:    #dc2626;
+    --tag-bg:    #eff6ff;
+    --tag-txt:   #1e40af;
+    --tag-act:   #fef3c7;
+    --tag-act-t: #92400e;
+    --radius:    10px;
+    --shadow:    0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.05);
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: #1d1d1f;
+    min-height: 100vh;
+    padding-bottom: 60px;
+  }
+
+  /* ── Header ──────────────────────────────────────────────────── */
+  header {
+    background: rgba(255,255,255,.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 100;
+    padding: 14px 24px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: -.01em; }
+  .scan-info { font-size: .75rem; color: var(--muted); white-space: nowrap; }
+
+  /* ── Buttons ─────────────────────────────────────────────────── */
+  button {
+    border: none; cursor: pointer;
+    font-family: inherit; font-size: .85rem; font-weight: 500;
+    border-radius: 8px; transition: background .15s, opacity .15s;
+  }
+  .btn-primary {
+    background: var(--accent); color: #fff;
+    padding: 7px 14px;
+  }
+  .btn-primary:hover { background: var(--accent-h); }
+  .btn-primary:active { opacity: .85; }
+  .btn-ghost {
+    background: transparent; color: var(--muted);
+    padding: 6px 10px; border: 1px solid var(--border);
+  }
+  .btn-ghost:hover { background: var(--border); color: #1d1d1f; }
+  .btn-danger { background: transparent; color: var(--danger); padding: 4px 8px; border-radius: 6px; }
+  .btn-danger:hover { background: #fee2e2; }
+
+  /* ── Main layout ─────────────────────────────────────────────── */
+  main { max-width: 760px; margin: 0 auto; padding: 28px 20px; }
+
+  /* ── Add item bar ────────────────────────────────────────────── */
+  .add-bar {
+    display: flex; gap: 8px; margin-bottom: 28px;
+  }
+  .add-bar input {
+    flex: 1; padding: 10px 14px;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    font-family: inherit; font-size: .9rem; background: var(--card);
+    outline: none; transition: border-color .15s, box-shadow .15s;
+  }
+  .add-bar input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(0,113,227,.15);
+  }
+  .add-bar input::placeholder { color: #b0b0b8; }
+
+  /* ── Section headers ─────────────────────────────────────────── */
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px; cursor: pointer; user-select: none;
+  }
+  .section-title {
+    font-size: .75rem; font-weight: 700; letter-spacing: .07em;
+    text-transform: uppercase; color: var(--muted);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .count-badge {
+    background: var(--border); color: var(--muted);
+    font-size: .7rem; font-weight: 700; border-radius: 99px;
+    padding: 1px 7px; letter-spacing: 0;
+  }
+  .chevron { font-size: .75rem; color: var(--muted); transition: transform .2s; }
+  .chevron.open { transform: rotate(180deg); }
+
+  /* ── Task card ───────────────────────────────────────────────── */
+  .task-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 32px; }
+  .task-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 12px 14px; transition: box-shadow .15s;
+  }
+  .task-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+  .task-card.done { background: var(--done-bg); border-color: #bbf7d0; }
+  .task-card.done .task-text { color: var(--muted); text-decoration: line-through; }
+
+  /* Checkbox */
+  .task-check {
+    width: 18px; height: 18px; border-radius: 5px;
+    border: 2px solid var(--border); background: transparent;
+    flex-shrink: 0; cursor: pointer; margin-top: 2px;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s, border-color .15s;
+  }
+  .task-check:hover { border-color: var(--accent); }
+  .task-check.checked { background: var(--done-txt); border-color: var(--done-txt); }
+  .task-check.checked::after { content: "✓"; color: #fff; font-size: .7rem; font-weight: 700; }
+
+  /* Content */
+  .task-body { flex: 1; min-width: 0; }
+  .task-text { font-size: .9rem; line-height: 1.4; word-break: break-word; }
+  .task-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+
+  /* Tags */
+  .tag {
+    font-size: .68rem; font-weight: 600; border-radius: 5px;
+    padding: 2px 7px; white-space: nowrap;
+  }
+  .tag-file   { background: var(--tag-bg);  color: var(--tag-txt); }
+  .tag-action { background: var(--tag-act); color: var(--tag-act-t); }
+  .tag-manual { background: #f3f4f6; color: #374151; }
+  .tag-folder { background: #fdf4ff; color: #7e22ce; }
+  .tag-ai     { background: #fdf4ff; color: #6d28d9; }
+
+  /* Source link tag */
+  a.tag-file {
+    cursor: pointer; text-decoration: none; position: relative;
+  }
+  a.tag-file:hover { background: #dbeafe; color: #1d4ed8; }
+  .tag-synced { background: #d1fae5; color: #065f46; }
+
+  /* Non-link file tag tooltip */
+  span.tag-file { cursor: default; position: relative; }
+  span.tag-file[title]:hover::after {
+    content: attr(title);
+    position: absolute; bottom: 110%; left: 0;
+    background: #1d1d1f; color: #fff; font-size: .7rem; font-weight: 400;
+    border-radius: 6px; padding: 4px 8px; white-space: nowrap; z-index: 10;
+  }
+
+  /* ── Inline edit ─────────────────────────────────────────────── */
+  .task-edit-wrap {
+    display: flex; align-items: center; gap: 6px; margin-bottom: 4px;
+  }
+  .task-edit-input {
+    flex: 1; padding: 4px 8px; min-width: 0;
+    border: 1.5px solid var(--accent); border-radius: 6px;
+    font-family: inherit; font-size: .9rem; outline: none;
+    box-shadow: 0 0 0 3px rgba(0,113,227,.12);
+  }
+  .btn-edit-save {
+    background: var(--accent); color: #fff;
+    padding: 4px 10px; border-radius: 6px; font-size: .8rem; flex-shrink: 0;
+  }
+  .btn-edit-save:hover { background: var(--accent-h); }
+  .btn-edit-cancel {
+    background: transparent; color: var(--muted);
+    padding: 4px 8px; border-radius: 6px; font-size: .8rem;
+    border: 1px solid var(--border); flex-shrink: 0;
+  }
+  .btn-edit-cancel:hover { background: var(--border); color: #1d1d1f; }
+  .task-text { cursor: default; }
+  .task-text[data-editable]:hover { color: var(--accent); }
+
+  /* ── Category sub-sections ───────────────────────────────────── */
+  .cat-section { margin-bottom: 18px; }
+  .cat-header {
+    display: flex; align-items: center; gap: 7px;
+    margin-bottom: 6px; padding: 0 2px;
+  }
+  .cat-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .cat-name {
+    font-size: .7rem; font-weight: 700; letter-spacing: .07em;
+    text-transform: uppercase; flex: 1;
+  }
+  .cat-drop-zone {
+    min-height: 46px; border-radius: var(--radius);
+    transition: border-color .15s, background .15s;
+  }
+  .cat-drop-zone.drag-over {
+    outline: 2px dashed var(--accent);
+    background: rgba(0,113,227,.04);
+  }
+  .cat-empty {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 40px; border: 1.5px dashed var(--border);
+    border-radius: var(--radius); color: var(--muted); font-size: .8rem;
+    transition: border-color .15s, color .15s;
+  }
+  .cat-drop-zone.drag-over .cat-empty { border-color: var(--accent); color: var(--accent); }
+  /* dragging cursor on cards */
+  .task-card[draggable=true] { cursor: grab; }
+  .task-card[draggable=true]:active { cursor: grabbing; }
+  /* category badge in task meta */
+  .tag-cat { border-radius: 99px; }
+
+  /* ── Calendar inline form ─────────────────────────────────────── */
+  .task-card { flex-wrap: wrap; } /* allow cal-form-wrap to become a second row */
+  .cal-form-wrap { flex: 0 0 100%; margin-top: 4px; }
+  .cal-divider { border: none; border-top: 1px solid var(--border); margin: 6px 0 10px; }
+  .cal-form-grid { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+  .cal-form-row { display: flex; align-items: center; gap: 10px; }
+  .cal-label {
+    font-size: .72rem; font-weight: 600; color: var(--muted);
+    width: 40px; flex-shrink: 0; text-align: right;
+  }
+  .cal-input {
+    padding: 5px 9px; border: 1px solid var(--border); border-radius: 6px;
+    font-family: inherit; font-size: .85rem; outline: none; background: var(--bg);
+  }
+  .cal-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(0,113,227,.12); background: #fff; }
+  .cal-input-sm { max-width: 140px; }
+  .cal-when-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .cal-select {
+    padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px;
+    font-family: inherit; font-size: .85rem; outline: none; cursor: pointer; background: var(--bg);
+  }
+  .cal-form-actions { display: flex; gap: 8px; align-items: center; }
+  .btn-cal {
+    background: transparent; color: var(--muted);
+    padding: 2px 5px; border-radius: 6px; font-size: 1rem; line-height: 1;
+    flex-shrink: 0;
+  }
+  .btn-cal:hover { background: #e0f0ff; color: var(--accent); }
+
+  /* ── Empty state ─────────────────────────────────────────────── */
+  .empty {
+    text-align: center; padding: 40px 20px; color: var(--muted);
+    font-size: .9rem; background: var(--card); border: 1px dashed var(--border);
+    border-radius: var(--radius);
+  }
+  .empty-icon { font-size: 2rem; margin-bottom: 8px; }
+
+  /* ── Spinner ─────────────────────────────────────────────────── */
+  .spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,.4); border-top-color: #fff;
+    border-radius: 50%; animation: spin .6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Toast ───────────────────────────────────────────────────── */
+  #toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: #1d1d1f; color: #fff; padding: 10px 18px;
+    border-radius: 99px; font-size: .85rem; pointer-events: none;
+    opacity: 0; transition: opacity .2s; white-space: nowrap; z-index: 999;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <h1>📋 Admin Tasks</h1>
+    <span class="scan-info" id="scan-info">Loading…</span>
+  </div>
+  <button class="btn-primary" id="btn-scan" onclick="rescan()">Rescan files</button>
+</header>
+
+<main>
+  <!-- Add item -->
+  <div class="add-bar">
+    <input type="text" id="new-task-input" placeholder="Add a task…" maxlength="300"
+           onkeydown="if(event.key==='Enter') addTask()">
+    <button class="btn-primary" onclick="addTask()">Add</button>
+  </div>
+
+  <!-- To Do section -->
+  <div class="section-header" onclick="toggleSection('todo')">
+    <span class="section-title">
+      To Do
+      <span class="count-badge" id="todo-count">0</span>
+    </span>
+    <span class="chevron open" id="todo-chevron">▼</span>
+  </div>
+  <div id="todo-list"></div>
+
+  <!-- Completed section -->
+  <div class="section-header" onclick="toggleSection('done')">
+    <span class="section-title">
+      Completed
+      <span class="count-badge" id="done-count">0</span>
+    </span>
+    <span class="chevron" id="done-chevron">▼</span>
+  </div>
+  <div id="done-list" class="task-list" style="display:none"></div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let allItems  = [];
+let draggedId = null;
+
+const CATEGORIES = [
+  { key: 'Holiday',  label: 'Holiday',  color: '#16a34a', bg: '#dcfce7' },
+  { key: 'Work',     label: 'Work',     color: '#0071e3', bg: '#dbeafe' },
+  { key: 'Finances', label: 'Finances', color: '#b45309', bg: '#fef3c7' },
+  { key: 'Other',    label: 'Other',    color: '#6e6e73', bg: '#f3f4f6' },
+];
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', loadTasks);
+
+async function loadTasks() {
+  try {
+    const res  = await fetch('/api/tasks');
+    const data = await res.json();
+    applyData(data);
+  } catch(e) {
+    showToast('Could not reach server');
+  }
+}
+
+function applyData(data) {
+  allItems = (data.items || []).filter(i => !i.deleted);
+
+  // Last scan time
+  if (data.last_scan) {
+    const d = new Date(data.last_scan);
+    document.getElementById('scan-info').textContent =
+      'Scanned ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  } else {
+    document.getElementById('scan-info').textContent = 'Not yet scanned';
+  }
+
+  render();
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function render() {
+  const todo = allItems.filter(i => !i.completed);
+  const done = allItems.filter(i =>  i.completed);
+
+  document.getElementById('todo-count').textContent = todo.length;
+  document.getElementById('done-count').textContent = done.length;
+
+  renderTodoSection(todo);
+  renderList('done-list', done);
+}
+
+// ── Card builder (shared by both sections) ─────────────────────────────────
+function buildCard(item, opts = {}) {
+  const { draggable = false, showCalBtn = false } = opts;
+
+  const card = document.createElement('div');
+  card.className = 'task-card' + (item.completed ? ' done' : '');
+  card.dataset.id = item.id;
+
+  if (draggable) {
+    card.draggable = true;
+    card.ondragstart = (e) => {
+      draggedId = item.id;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.id);
+      requestAnimationFrame(() => { card.style.opacity = '0.45'; });
+    };
+    card.ondragend = () => { card.style.opacity = ''; draggedId = null; };
+  }
+
+  // Checkbox
+  const chk = document.createElement('div');
+  chk.className = 'task-check' + (item.completed ? ' checked' : '');
+  chk.title = item.completed ? 'Mark as to-do' : 'Mark as done';
+  chk.onclick = () => toggleItem(item.id);
+
+  // Body
+  const body = document.createElement('div');
+  body.className = 'task-body';
+
+  const textEl = document.createElement('div');
+  textEl.className = 'task-text';
+  textEl.textContent = item.text;
+  textEl.dataset.editable = '1';
+  textEl.title = 'Double-click to edit';
+
+  const meta = document.createElement('div');
+  meta.className = 'task-meta';
+
+  // Category badge (non-Other todo cards only)
+  if (draggable && item.category && item.category !== 'Other') {
+    const cfg = CATEGORIES.find(c => c.key === item.category);
+    if (cfg) {
+      const b = makeTag(cfg.label, 'tag-cat');
+      b.style.background = cfg.bg;
+      b.style.color       = cfg.color;
+      meta.appendChild(b);
+    }
+  }
+
+  // Source tags
+  if (item.source === 'manual') {
+    meta.appendChild(makeTag('Manual', 'tag-manual'));
+  } else {
+    if (item.source_folder && item.source_folder !== '.') {
+      meta.appendChild(makeTag('📁 ' + item.source_folder, 'tag-folder'));
+    }
+    if (item.file_name) {
+      const icon = item.pattern_type === 'gdoc' ? '📝' : '📄';
+      if (item.source_url) {
+        const a = document.createElement('a');
+        a.className = 'tag tag-file';
+        a.textContent = icon + ' ' + item.file_name + ' ↗';
+        a.href = item.source_url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.title = 'Open in Google Docs';
+        meta.appendChild(a);
+      } else {
+        const t = makeTag(icon + ' ' + item.file_name, 'tag-file');
+        t.title = item.source_file || item.file_name;
+        meta.appendChild(t);
+      }
+    }
+    if (item.pattern_type === 'llm') {
+      meta.appendChild(makeTag('✨ AI', 'tag-ai'));
+    } else if (item.pattern_type === 'action') {
+      meta.appendChild(makeTag('Heuristic', 'tag-action'));
+    }
+  }
+
+  body.appendChild(textEl);
+  body.appendChild(meta);
+
+  // Delete button
+  const del = document.createElement('button');
+  del.className = 'btn-danger';
+  del.title = 'Delete';
+  del.textContent = '✕';
+  del.onclick = () => deleteItem(item.id);
+
+  // Bind edit (needs del in scope)
+  textEl.ondblclick = () => startEdit(item.id, textEl, item.text, chk, del);
+
+  if (showCalBtn) {
+    const calBtn = document.createElement('button');
+    calBtn.className = 'btn-cal';
+    calBtn.title     = 'Add to Google Calendar';
+    calBtn.textContent = '📅';
+    calBtn.onclick = () => openCalendarForm(item.id, item.text, card, calBtn);
+    card.appendChild(chk);
+    card.appendChild(body);
+    card.appendChild(calBtn);
+    card.appendChild(del);
+  } else {
+    card.appendChild(chk);
+    card.appendChild(body);
+    card.appendChild(del);
+  }
+
+  return card;
+}
+
+// ── Completed section renderer ──────────────────────────────────────────────
+function renderList(containerId, items) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = '';
+  if (!items.length) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">📭</div>Nothing completed yet.</div>`;
+    return;
+  }
+  items.forEach(item => el.appendChild(buildCard(item)));
+}
+
+// ── To-Do section renderer (category sub-sections + drag-drop) ─────────────
+function renderTodoSection(items) {
+  const container = document.getElementById('todo-list');
+  container.innerHTML = '';
+
+  if (!items.length) {
+    container.innerHTML = `<div class="empty"><div class="empty-icon">✅</div>No open tasks — nice work!</div>`;
+    return;
+  }
+
+  CATEGORIES.forEach(cat => {
+    const catItems = items.filter(i => (i.category || 'Other') === cat.key);
+
+    const section  = document.createElement('div');
+    section.className = 'cat-section';
+
+    // Sub-header
+    const hdr  = document.createElement('div');
+    hdr.className = 'cat-header';
+    const dot  = document.createElement('span');
+    dot.className = 'cat-dot';
+    dot.style.background = cat.color;
+    const name = document.createElement('span');
+    name.className = 'cat-name';
+    name.style.color = cat.color;
+    name.textContent = cat.label;
+    const badge = document.createElement('span');
+    badge.className = 'count-badge';
+    badge.textContent = catItems.length;
+    hdr.appendChild(dot);
+    hdr.appendChild(name);
+    hdr.appendChild(badge);
+
+    // Drop zone
+    const zone = document.createElement('div');
+    zone.className = 'cat-drop-zone task-list';
+    zone.dataset.category = cat.key;
+
+    zone.ondragover = (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      zone.classList.add('drag-over');
+    };
+    zone.ondragleave = (e) => {
+      if (!zone.contains(e.relatedTarget)) zone.classList.remove('drag-over');
+    };
+    zone.ondrop = (e) => {
+      e.preventDefault();
+      zone.classList.remove('drag-over');
+      const id = e.dataTransfer.getData('text/plain') || draggedId;
+      if (id) setCategory(id, cat.key);
+    };
+
+    if (catItems.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'cat-empty';
+      empty.textContent = 'Drop tasks here';
+      zone.appendChild(empty);
+    } else {
+      catItems.forEach(item => zone.appendChild(buildCard(item, { draggable: true, showCalBtn: true })));
+    }
+
+    section.appendChild(hdr);
+    section.appendChild(zone);
+    container.appendChild(section);
+  });
+}
+
+function makeTag(text, cls) {
+  const t = document.createElement('span');
+  t.className = 'tag ' + cls;
+  t.textContent = text;
+  return t;
+}
+
+// ── Category drag-drop ─────────────────────────────────────────────────────
+async function setCategory(id, category) {
+  try {
+    const res  = await fetch(`/api/tasks/${id}/category`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ category }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      const item = allItems.find(i => i.id === id);
+      if (item) { item.category = category; render(); showToast(`Moved to ${category}`); }
+    }
+  } catch(e) { showToast('Error updating category'); }
+}
+
+// ── Calendar inline form ────────────────────────────────────────────────────
+function todayStr()    { return new Date().toISOString().slice(0, 10); }
+function nextHourStr() {
+  const d = new Date();
+  d.setMinutes(0, 0, 0);
+  d.setHours(d.getHours() + 1);
+  return String(d.getHours()).padStart(2, '0') + ':00';
+}
+function makeCalLabel(text) {
+  const l = document.createElement('span');
+  l.className = 'cal-label'; l.textContent = text; return l;
+}
+
+function openCalendarForm(id, taskText, card, calBtn) {
+  if (card.querySelector('.cal-form-wrap')) return; // already open — do nothing
+
+  const wrap = document.createElement('div');
+  wrap.className = 'cal-form-wrap';
+
+  const hr = document.createElement('hr');
+  hr.className = 'cal-divider';
+
+  // Title
+  const titleInput = document.createElement('input');
+  titleInput.type = 'text'; titleInput.className = 'cal-input';
+  titleInput.value = taskText; titleInput.maxLength = 200;
+  titleInput.placeholder = 'Event title';
+  const row1 = document.createElement('div');
+  row1.className = 'cal-form-row';
+  row1.appendChild(makeCalLabel('Title')); row1.appendChild(titleInput);
+
+  // Date / time / duration
+  const dateInput = document.createElement('input');
+  dateInput.type = 'date'; dateInput.className = 'cal-input cal-input-sm';
+  dateInput.value = todayStr();
+
+  const timeInput = document.createElement('input');
+  timeInput.type = 'time'; timeInput.className = 'cal-input cal-input-sm';
+  timeInput.value = nextHourStr();
+
+  const durSel = document.createElement('select');
+  durSel.className = 'cal-select';
+  [['30','30 min'],['60','1 hour'],['120','2 hours'],['0','All day']].forEach(([v,l]) => {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = l;
+    if (v === '60') o.selected = true;
+    durSel.appendChild(o);
+  });
+  durSel.onchange = () => {
+    timeInput.disabled = durSel.value === '0';
+    timeInput.style.opacity = durSel.value === '0' ? '0.35' : '1';
+  };
+
+  const whenRow = document.createElement('div');
+  whenRow.className = 'cal-when-row';
+  whenRow.appendChild(dateInput); whenRow.appendChild(timeInput); whenRow.appendChild(durSel);
+  const row2 = document.createElement('div');
+  row2.className = 'cal-form-row';
+  row2.appendChild(makeCalLabel('When')); row2.appendChild(whenRow);
+
+  const grid = document.createElement('div');
+  grid.className = 'cal-form-grid';
+  grid.appendChild(row1); grid.appendChild(row2);
+
+  // Buttons
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn-primary';
+  saveBtn.style.cssText = 'font-size:.8rem;padding:6px 14px';
+  saveBtn.textContent = 'Add to Calendar';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn-ghost';
+  cancelBtn.style.cssText = 'font-size:.8rem';
+  cancelBtn.textContent = 'Cancel';
+
+  const actions = document.createElement('div');
+  actions.className = 'cal-form-actions';
+  actions.appendChild(saveBtn); actions.appendChild(cancelBtn);
+
+  wrap.appendChild(hr); wrap.appendChild(grid); wrap.appendChild(actions);
+  card.appendChild(wrap);
+
+  // Toggle: clicking 📅 again closes the form
+  const origOnclick = calBtn.onclick;
+  calBtn.title = 'Close form';
+  function doClose() {
+    wrap.remove();
+    calBtn.title   = 'Add to Google Calendar';
+    calBtn.onclick = origOnclick;
+  }
+  calBtn.onclick  = doClose;
+  cancelBtn.onclick = doClose;
+
+  saveBtn.onclick = async () => {
+    const title    = titleInput.value.trim();
+    const date_s   = dateInput.value;
+    const time_s   = durSel.value === '0' ? '' : timeInput.value;
+    const duration = parseInt(durSel.value, 10);
+    if (!title) { titleInput.focus(); return; }
+    if (!date_s) { dateInput.focus(); return; }
+
+    saveBtn.disabled    = true;
+    saveBtn.textContent = '…';
+    try {
+      const res  = await fetch(`/api/tasks/${id}/calendar`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ title, date: date_s, time: time_s, duration }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        doClose();
+        showToast('📅 Added to Calendar');
+        if (data.event_url) window.open(data.event_url, '_blank', 'noopener');
+      } else {
+        showToast('Calendar error — check server console');
+        saveBtn.disabled = false; saveBtn.textContent = 'Add to Calendar';
+      }
+    } catch(e) {
+      showToast('Error creating event');
+      saveBtn.disabled = false; saveBtn.textContent = 'Add to Calendar';
+    }
+  };
+
+  titleInput.focus(); titleInput.select();
+}
+
+// ── Section toggle ─────────────────────────────────────────────────────────
+function toggleSection(which) {
+  const list    = document.getElementById(which + '-list');
+  const chevron = document.getElementById(which + '-chevron');
+  const hidden  = list.style.display === 'none';
+  list.style.display    = hidden ? '' : 'none';
+  chevron.classList.toggle('open', hidden);
+}
+
+// ── Actions ────────────────────────────────────────────────────────────────
+async function toggleItem(id) {
+  const item = allItems.find(i => i.id === id);
+  if (!item) return;
+
+  // Optimistic update: flip immediately so the first click feels instant
+  const prev = item.completed;
+  item.completed = !prev;
+  render();
+
+  try {
+    const res  = await fetch(`/api/tasks/${id}/toggle`, { method: 'POST' });
+    const data = await res.json();
+    item.completed = data.completed;   // sync with server truth
+    render();
+    if (item.completed) {
+      showToast(data.doc_synced ? '✓ Moved to Completed' : '✓ Done');
+    } else {
+      showToast('↩ Reopened');
+    }
+  } catch(e) {
+    item.completed = prev;   // roll back on error
+    render();
+    showToast('Error updating task');
+  }
+}
+
+async function deleteItem(id) {
+  try {
+    const res  = await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    allItems = allItems.filter(i => i.id !== id);
+    render();
+    showToast(data.doc_synced ? '🗑 Removed — moved in doc' : 'Task removed');
+  } catch(e) { showToast('Error deleting task'); }
+}
+
+async function addTask() {
+  const input = document.getElementById('new-task-input');
+  const text  = input.value.trim();
+  if (!text) return;
+
+  try {
+    const res  = await fetch('/api/tasks/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const item = await res.json();
+    allItems.unshift(item);
+    input.value = '';
+    render();
+    showToast('Task added');
+  } catch(e) { showToast('Error adding task'); }
+}
+
+// ── Inline edit ────────────────────────────────────────────────────────────
+function startEdit(id, textEl, currentText, chk, delBtn) {
+  // Prevent opening a second editor on the same card
+  if (textEl.parentElement.querySelector('.task-edit-wrap')) return;
+
+  const editWrap = document.createElement('div');
+  editWrap.className = 'task-edit-wrap';
+
+  const input = document.createElement('input');
+  input.type      = 'text';
+  input.className = 'task-edit-input';
+  input.value     = currentText;
+  input.maxLength = 500;
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className   = 'btn-edit-save';
+  saveBtn.textContent = '✓';
+  saveBtn.title       = 'Save (Enter)';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className   = 'btn-edit-cancel';
+  cancelBtn.textContent = '✕';
+  cancelBtn.title       = 'Cancel (Esc)';
+
+  editWrap.appendChild(input);
+  editWrap.appendChild(saveBtn);
+  editWrap.appendChild(cancelBtn);
+
+  // Tuck the original elements out of sight while editing
+  textEl.style.display  = 'none';
+  chk.style.display     = 'none';
+  delBtn.style.display  = 'none';
+
+  // Insert edit row at the top of the body div (sibling of textEl)
+  textEl.parentElement.insertBefore(editWrap, textEl);
+  input.focus();
+  input.select();
+
+  function doSave() {
+    const newText = input.value.trim();
+    if (!newText) return;
+    if (newText === currentText) {
+      doCancel();
+      return;
+    }
+    performSave(id, newText, editWrap, textEl, chk, delBtn);
+  }
+
+  function doCancel() {
+    editWrap.remove();
+    textEl.style.display = '';
+    chk.style.display    = '';
+    delBtn.style.display = '';
+  }
+
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter')  { e.preventDefault(); doSave(); }
+    if (e.key === 'Escape') { e.preventDefault(); doCancel(); }
+  };
+  saveBtn.onclick  = doSave;
+  cancelBtn.onclick = doCancel;
+}
+
+async function performSave(id, newText, editWrap, textEl, chk, delBtn) {
+  // Disable inputs while saving
+  editWrap.querySelectorAll('input, button').forEach(el => el.disabled = true);
+  try {
+    const res  = await fetch(`/api/tasks/${id}/edit`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ text: newText }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      const item = allItems.find(i => i.id === id);
+      if (item) item.text = newText;
+      textEl.textContent = newText;
+      showToast(data.doc_synced ? '✏️ Saved — doc updated' : '✏️ Task updated');
+    } else {
+      showToast('Error saving task');
+    }
+  } catch(e) {
+    showToast('Error saving task');
+  }
+  // Always restore the normal view
+  editWrap.remove();
+  textEl.style.display = '';
+  chk.style.display    = '';
+  delBtn.style.display = '';
+}
+
+async function rescan() {
+  const btn = document.getElementById('btn-scan');
+  btn.innerHTML = '<span class="spinner"></span>';
+  btn.disabled  = true;
+  try {
+    const res  = await fetch('/api/scan', { method: 'POST' });
+    const data = await res.json();
+    applyData(data);
+    showToast('Files rescanned');
+  } catch(e) { showToast('Scan failed'); }
+  finally {
+    btn.textContent = 'Rescan files';
+    btn.disabled    = false;
+  }
+}
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+let toastTimer;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+</script>
+</body>
+</html>
