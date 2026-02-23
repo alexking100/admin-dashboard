@@ -44,6 +44,72 @@ python3 dashboard.py
 
 The dashboard opens automatically at `http://localhost:5678`. On first run a browser tab will open for Google sign-in.
 
+## How It Works
+
+The dashboard is a single-server Python app that bridges your local Google Doc files with a browser UI.
+
+```mermaid
+flowchart TD
+    subgraph Sources["File Sources (local filesystem)"]
+        GDOC[".gdoc files"]
+        DOCX[".docx files"]
+    end
+
+    subgraph Extraction["Parsing & Extraction (dashboard.py)"]
+        GAPI["Google Docs API\n(OAuth 2.0)"]
+        DOCXLIB["python-docx"]
+        LLM["Claude Haiku\n(LLM extraction)\ntask + category + done"]
+        RULES["Rule-based fallback\n(bullets, checkboxes,\naction verbs)"]
+    end
+
+    subgraph State["State Management"]
+        JSON["dashboard_tasks.json\n(source of truth)\nitems + mtime cache"]
+    end
+
+    subgraph Server["HTTP Server — localhost:5678"]
+        API["REST API\nGET  /api/tasks\nPOST /api/scan\nPOST /api/tasks/:id/toggle\nPOST /api/tasks/:id/edit\nPOST /api/tasks/:id/category\nPOST /api/tasks/:id/calendar\nPOST /api/tasks/add\nDELETE /api/tasks/:id"]
+    end
+
+    subgraph UI["Browser UI (dashboard.html — vanilla JS)"]
+        RENDER["Render\nTodo / Completed lists\nby category"]
+        DRAG["Drag-drop\ncategory reassign"]
+        EDIT["Inline edit"]
+        CAL["Calendar form"]
+    end
+
+    subgraph BackSync["Back-sync to Google"]
+        GDOCS_WRITE["Google Docs API\n(strikethrough / move\nto COMPLETED / REMOVED)"]
+        GCAL["Google Calendar API\n(create event)"]
+    end
+
+    GDOC -->|"fetch via Drive API"| GAPI
+    DOCX --> DOCXLIB
+    GAPI --> LLM
+    GAPI --> RULES
+    DOCXLIB --> RULES
+    LLM -->|"structured tasks"| JSON
+    RULES -->|"structured tasks"| JSON
+    JSON <-->|"load / save"| API
+    API -->|"JSON response"| RENDER
+    RENDER --> DRAG
+    RENDER --> EDIT
+    RENDER --> CAL
+    DRAG -->|"POST category"| API
+    EDIT -->|"POST edit"| API
+    CAL -->|"POST calendar"| API
+    RENDER -->|"POST toggle / DELETE"| API
+    API -->|"toggle / edit / delete"| GDOCS_WRITE
+    API -->|"create event"| GCAL
+```
+
+### Key data flow
+
+1. **Scan** — `dashboard.py` walks the filesystem for `.gdoc` and `.docx` files. For each Google Doc it fetches the full document via the Docs API (skipping unchanged files using an mtime cache). Word docs are parsed locally with `python-docx`.
+2. **Extract** — Paragraphs are sent to Claude Haiku to identify tasks, infer categories (Holiday / Work / Finances / Other), and detect already-completed items. If the Anthropic API key is absent, a rule-based fallback fires instead (bullets, checkboxes, action-verb detection).
+3. **Merge & persist** — Fresh items are merged with the existing `dashboard_tasks.json`, preserving user-set state (completed, deleted, category overrides, manually added tasks). The result is written to disk.
+4. **Serve** — A lightweight Python `http.server` exposes a REST API consumed by the single-page HTML/JS frontend.
+5. **Back-sync** — Every user action (toggle, edit, delete) is immediately reflected in the source Google Doc via the Docs API (strikethrough, text replacement, or moving the item to a COMPLETED / REMOVED section). Calendar events are created via the Calendar API.
+
 ## Files not in this repo
 
 These are gitignored and must be created locally:
