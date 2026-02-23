@@ -10,6 +10,7 @@ A local Python dashboard that scans Google Docs for to-do items, displays them i
 - Google Calendar integration — add tasks as events from the dashboard
 - Inline editing synced back to the Google Doc
 - Drag-and-drop category management
+- Daily ntfy push notifications for tasks overdue by 7+ days
 
 ## Setup
 
@@ -36,7 +37,40 @@ ANTHROPIC_API_KEY=your_key_here
 
 Get a key at [console.anthropic.com](https://console.anthropic.com). Without it the dashboard falls back to rule-based task extraction.
 
-### 4. Run
+### 4. Overdue task alerts via ntfy (optional)
+
+`check_alerts.py` sends a push notification to your phone for every incomplete task that is 7+ days old. It fires once per task per day, building up in your ntfy history until you mark things done.
+
+**Install the ntfy app** on your phone (iOS / Android) and subscribe to a topic name of your choice (e.g. `alex-tasks-alerts`).
+
+Add to your `.env`:
+
+```
+NTFY_TOPIC=alex-tasks-alerts
+# NTFY_URL=https://ntfy.sh   # optional — only needed if self-hosting ntfy
+```
+
+**Test it manually:**
+
+```bash
+python3 check_alerts.py
+```
+
+**Schedule it with cron** (fires at 09:00 every day):
+
+```bash
+crontab -e
+```
+
+Add this line (replace the path with your actual install location):
+
+```
+0 9 * * * /usr/bin/python3 /path/to/admin-dashboard/check_alerts.py >> /tmp/dashboard_alerts.log 2>&1
+```
+
+Tasks overdue by 14+ days are sent at **high** priority in ntfy.
+
+### 5. Run
 
 ```bash
 python3 dashboard.py
@@ -118,5 +152,5 @@ These are gitignored and must be created locally:
 |---|---|
 | `credentials.json` | Google OAuth client secret |
 | `token.json` | Google OAuth token (auto-generated on first run) |
-| `.env` | Contains your Anthropic API key |
+| `.env` | Contains your Anthropic API key and ntfy topic |
 | `dashboard_tasks.json` | Your personal task data (auto-generated) |
