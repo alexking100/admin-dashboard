@@ -59,14 +59,11 @@ HTML_FILE        = ADMIN_DIR / "dashboard.html"
 CREDENTIALS_FILE = ADMIN_DIR / "credentials.json"
 TOKEN_FILE       = ADMIN_DIR / "token.json"
 PORT             = 5678
-SHEET_ID         = os.environ.get("SHEET_ID", "").strip()
-SHEET_NAME       = "Sheet1"
 
 SCOPES = [
-    "https://www.googleapis.com/auth/documents.readonly",
+    "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/calendar.events",
-    "https://www.googleapis.com/auth/spreadsheets",
 ]
 
 # Action verbs for heuristic detection
@@ -87,7 +84,6 @@ ACTION_VERBS = {
 _docs_service     = None
 _drive_service    = None
 _calendar_service = None
-_sheets_service   = None
 
 def _get_creds():
     """Load, refresh, or obtain OAuth credentials. Handles stale scope automatically."""
@@ -125,23 +121,22 @@ def _get_creds():
 
 
 def _init_services():
-    global _docs_service, _drive_service, _calendar_service, _sheets_service
+    global _docs_service, _drive_service, _calendar_service
     if _docs_service is not None:
-        return _docs_service, _drive_service, _calendar_service, _sheets_service
+        return _docs_service, _drive_service, _calendar_service
     if not GOOGLE_LIBS_AVAILABLE:
         print("  ℹ  Google API libraries not installed — pip3 install -r requirements.txt")
-        return None, None, None, None
+        return None, None, None
     if not CREDENTIALS_FILE.exists():
         print("  ℹ  No credentials.json — running without Google integration")
-        return None, None, None, None
+        return None, None, None
 
     creds             = _get_creds()
     _docs_service     = build("docs",     "v1", credentials=creds)
     _drive_service    = build("drive",    "v3", credentials=creds)
     _calendar_service = build("calendar", "v3", credentials=creds)
-    _sheets_service   = build("sheets",   "v4", credentials=creds)
-    print("  ✓  Google Docs, Drive, Calendar + Sheets API authenticated")
-    return _docs_service, _drive_service, _calendar_service, _sheets_service
+    print("  ✓  Google Docs, Drive + Calendar API authenticated")
+    return _docs_service, _drive_service, _calendar_service
 
 
 def get_docs_service():
@@ -154,217 +149,6 @@ def get_drive_service():
 
 def get_calendar_service():
     return _init_services()[2]
-
-
-def get_sheets_service():
-    return _init_services()[3]
-
-
-# ── Google Sheets helpers ──────────────────────────────────────────────────────
-
-SHEET_HEADERS = ["id", "task", "category", "source", "completed",
-                 "removed", "added_date", "updated_at"]
-_COL = {h: i for i, h in enumerate(SHEET_HEADERS)}   # "id"→0, "task"→1 …
-
-
-def sheets_init():
-    """Write the header row if the sheet is blank. Safe to call every startup."""
-    svc = get_sheets_service()
-    if not svc or not SHEET_ID:
-        return
-    try:
-        res = svc.spreadsheets().values().get(
-            spreadsheetId=SHEET_ID, range=f"{SHEET_NAME}!A1:A1"
-        ).execute()
-        if res.get("values"):
-            return   # headers already present
-        svc.spreadsheets().values().update(
-            spreadsheetId=SHEET_ID,
-            range=f"{SHEET_NAME}!A1",
-            valueInputOption="RAW",
-            body={"values": [SHEET_HEADERS]},
-        ).execute()
-        print("  ✓  Google Sheet initialised with headers")
-    except Exception as e:
-        print(f"  ⚠  sheets_init: {e}")
-
-
-def sheets_load_all() -> list:
-    """Return every data row as a list of dicts (skips header row)."""
-    svc = get_sheets_service()
-    if not svc or not SHEET_ID:
-        return []
-    try:
-        res  = svc.spreadsheets().values().get(
-            spreadsheetId=SHEET_ID, range=SHEET_NAME
-        ).execute()
-        rows = res.get("values", [])
-        if len(rows) < 2:
-            return []
-        header = rows[0]
-        return [
-            {header[i]: (row[i] if i < len(row) else "")
-             for i in range(len(header))}
-            for row in rows[1:]
-        ]
-    except Exception as e:
-        print(f"  ⚠  sheets_load_all: {e}")
-        return []
-
-
-def _item_to_row(item: dict) -> list:
-    """Convert a task dict to a Sheets row aligned with SHEET_HEADERS."""
-    return [
-        item.get("id",         ""),
-        item.get("text",       ""),
-        item.get("category",   "Other"),
-        item.get("source",     "manual"),
-        "TRUE"  if item.get("completed") else "FALSE",
-        "TRUE"  if item.get("removed") or item.get("deleted") else "FALSE",
-        item.get("added_date", datetime.now().strftime("%Y-%m-%d")),
-        item.get("updated_at", datetime.now().isoformat()),
-    ]
-
-
-def _row_to_item(row: dict) -> dict:
-    """Convert a Sheets row dict back to a task dict (for local cache rebuild)."""
-    removed = row.get("removed", "FALSE").upper() == "TRUE"
-    return {
-        "id":              row.get("id",       ""),
-        "text":            row.get("task",     ""),
-        "category":        row.get("category", "Other"),
-        "source":          row.get("source",   "manual"),
-        "completed":       row.get("completed", "FALSE").upper() == "TRUE",
-        "removed":         removed,
-        "deleted":         removed,   # dashboard uses 'deleted' to filter
-        "added_date":      row.get("added_date", ""),
-        "updated_at":      row.get("updated_at", ""),
-        # These fields aren't in Sheets; preserved from local JSON merge below
-        "source_file":     None,
-        "source_folder":   None,
-        "file_name":       None,
-        "pattern_type":    row.get("source", "manual"),
-        "doc_id":          None,
-        "doc_start_index": None,
-        "doc_end_index":   None,
-        "source_url":      None,
-    }
-
-
-def _sheets_find_row(task_id: str) -> int:
-    """Return the 1-based Sheets row number for task_id, or -1 if not found."""
-    svc = get_sheets_service()
-    if not svc or not SHEET_ID:
-        return -1
-    try:
-        res = svc.spreadsheets().values().get(
-            spreadsheetId=SHEET_ID, range=f"{SHEET_NAME}!A:A"
-        ).execute()
-        ids = [r[0] if r else "" for r in res.get("values", [])]
-        try:
-            return ids.index(task_id) + 1   # 1-based
-        except ValueError:
-            return -1
-    except Exception as e:
-        print(f"  ⚠  _sheets_find_row: {e}")
-        return -1
-
-
-def sheets_upsert(item: dict):
-    """Append a new row for item. No-op if a row with item['id'] already exists.
-    This enforces the additive-only rule: scan never overwrites existing data."""
-    svc = get_sheets_service()
-    if not svc or not SHEET_ID:
-        return
-    if _sheets_find_row(item["id"]) > 0:
-        return   # already in sheet — do not overwrite
-    try:
-        svc.spreadsheets().values().append(
-            spreadsheetId=SHEET_ID,
-            range=f"{SHEET_NAME}!A1",
-            valueInputOption="RAW",
-            insertDataOption="INSERT_ROWS",
-            body={"values": [_item_to_row(item)]},
-        ).execute()
-        print(f"  ➕ Sheet: added '{item['text'][:50]}'")
-    except Exception as e:
-        print(f"  ⚠  sheets_upsert: {e}")
-
-
-def sheets_update_row(task_id: str, **item_fields):
-    """Update specific fields on the Sheets row matching task_id.
-    Keyword keys match item dict keys (e.g. text=, category=, completed=, removed=)."""
-    # Map item dict key names → Sheets column names
-    KEY_MAP = {"text": "task"}
-    svc = get_sheets_service()
-    if not svc or not SHEET_ID:
-        return False
-    row_num = _sheets_find_row(task_id)
-    if row_num < 0:
-        print(f"  ⚠  sheets_update_row: id '{task_id}' not found in sheet")
-        return False
-    try:
-        col_last = chr(ord("A") + len(SHEET_HEADERS) - 1)
-        res = svc.spreadsheets().values().get(
-            spreadsheetId=SHEET_ID,
-            range=f"{SHEET_NAME}!A{row_num}:{col_last}{row_num}",
-        ).execute()
-        existing = list(res.get("values", [[]])[0])
-        while len(existing) < len(SHEET_HEADERS):
-            existing.append("")
-        for item_key, value in item_fields.items():
-            col_name = KEY_MAP.get(item_key, item_key)
-            if col_name in _COL:
-                existing[_COL[col_name]] = (
-                    ("TRUE" if value else "FALSE") if isinstance(value, bool)
-                    else str(value)
-                )
-        existing[_COL["updated_at"]] = datetime.now().isoformat()
-        svc.spreadsheets().values().update(
-            spreadsheetId=SHEET_ID,
-            range=f"{SHEET_NAME}!A{row_num}",
-            valueInputOption="RAW",
-            body={"values": [existing]},
-        ).execute()
-        return True
-    except Exception as e:
-        print(f"  ⚠  sheets_update_row: {e}")
-        return False
-
-
-def sheets_sync_to_local():
-    """Load all rows from Sheets and rebuild local JSON cache.
-    Called on startup + after each scan so the dashboard reflects Sheets truth."""
-    rows = sheets_load_all()
-    if not rows:
-        return
-    items_from_sheet = [_row_to_item(r) for r in rows]
-    # Preserve metadata fields (source_file, source_url, etc.) from existing local cache
-    local      = load_tasks()
-    local_by_id = {i["id"]: i for i in local.get("items", [])}
-    for item in items_from_sheet:
-        existing = local_by_id.get(item["id"], {})
-        for field in ("source_file", "source_folder", "file_name",
-                      "source_url", "doc_id", "doc_start_index", "doc_end_index"):
-            item[field] = existing.get(field, item.get(field))
-    local["items"] = items_from_sheet
-    save_tasks(local)
-    active = sum(1 for i in items_from_sheet if not i.get("removed"))
-    print(f"  ✓  Synced {len(items_from_sheet)} row(s) from Sheets ({active} active)")
-
-
-def sheets_migrate_from_json():
-    """One-time: push all existing local JSON items into Sheets (skips existing IDs)."""
-    data  = load_tasks()
-    items = data.get("items", [])
-    if not items:
-        return
-    print(f"  🔄 Migrating {len(items)} item(s) from JSON → Sheets…")
-    for item in items:
-        item.setdefault("removed", item.get("deleted", False))
-        item.setdefault("updated_at", datetime.now().isoformat())
-        sheets_upsert(item)
-    print("  ✓  Migration complete")
 
 
 # ── Persistence ────────────────────────────────────────────────────────────────
@@ -500,24 +284,28 @@ def get_anthropic_client():
 
 
 TASK_PROMPT = """\
-Extract every action item or to-do task from Alex's Google Doc.
+Extract every action item or to-do task from Alex's Google Doc (paragraphs below).
 
-Tasks appear as bullet or numbered list items, checklist items, or action-oriented prose.
-Treat each sub-task as a separate item; never merge sub-tasks.
-Ignore headings, notes, and non-actionable descriptions.
+Doc structure:
+- Active to-dos appear at the top of the document.
+- Items under "── COMPLETED ──" or "── REMOVED ──" headings are already handled — skip them.
+- Tasks appear as bullet/numbered list items, checklist items, or action-oriented prose.
+- Treat each sub-task as a separate item; never merge sub-tasks.
+- Ignore headings, notes, and non-actionable descriptions.
 
 For each task return:
   "p"        : paragraph number (int)
   "task"     : clean, imperative task text
+  "done"     : true only if context strongly implies already complete; false otherwise
   "category" : one of "Holiday", "Work", "Finances", "Other"
                Holiday  = travel, holidays, leisure bookings
                Work     = professional tasks, meetings, clients, colleagues;
-                          also assign Work to any item containing "(work)"
+                          also assign Work to any item containing "(work)" in the text
                Finances = payments, invoices, bills, banking, tax, insurance
-               Default to "Other" if unclear
+               Default to "Other" if the task doesn't clearly fit the above.
 
 Return ONLY a valid JSON array — no explanation, no markdown. Example:
-[{{"p": 3, "task": "Call Sarah about the contract", "category": "Work"}}]
+[{{"p": 3, "task": "Call Sarah about the contract", "done": false, "category": "Work"}}]
 
 If no tasks: []
 
@@ -527,12 +315,18 @@ Paragraphs:
 
 def extract_tasks_with_llm(all_paras: list):
     """Call Claude Haiku to identify task paragraphs.
-    Returns list of {p, task, category} dicts, or None on failure."""
+    Returns list of {p, task, done} dicts, or None on failure."""
     client = get_anthropic_client()
     if not client:
         return None
 
-    numbered = "\n".join(f"[{p['n']}] {p['text']}" for p in all_paras)
+    def _para_label(p):
+        if p.get("is_checkbox"):
+            prefix = "[☑ checked]" if p.get("completed") else "[☐ unchecked]"
+            return f"[{p['n']}] {prefix} {p['text']}"
+        return f"[{p['n']}] {p['text']}"
+
+    numbered = "\n".join(_para_label(p) for p in all_paras)
     prompt   = TASK_PROMPT.format(paragraphs=numbered)
 
     try:
@@ -547,9 +341,10 @@ def extract_tasks_with_llm(all_paras: list):
         parsed = json.loads(raw)
         print("  ── Haiku output ──────────────────────────────────")
         for r in parsed:
-            cat  = r.get("category", "Other")
-            task = r.get("task", "")[:80]
-            print(f"  ○ [{cat:8}] p{r.get('p','?'):>3}  {task}")
+            status = "✓" if r.get("done") else "○"
+            cat    = r.get("category", "Other")
+            task   = r.get("task", "")[:80]
+            print(f"  {status} [{cat:8}] p{r.get('p','?'):>3}  {task}")
         print("  ─────────────────────────────────────────────────")
         return parsed
     except Exception as e:
@@ -562,13 +357,12 @@ def extract_tasks_with_llm(all_paras: list):
 def parse_google_doc(doc: dict, doc_id: str, file_path: Path) -> list:
     """
     Extract task items from a Google Docs API response.
-    Uses Claude Haiku when available; falls back to rule-based parsing.
-    The doc is treated as read-only input — all tasks enter as incomplete.
+    Uses Claude Haiku when an API key is available; falls back to rule-based parsing.
     """
     source_url = f"https://docs.google.com/document/d/{doc_id}/edit"
     lists_info = doc.get("lists", {})
 
-    # ── Step 1: Build flat paragraph list ─────────────────────────────────────
+    # ── Step 1: Build flat paragraph list with position tracking ──────────────
     all_paras = []
     n = 0
     for element in doc.get("body", {}).get("content", []):
@@ -579,23 +373,57 @@ def parse_google_doc(doc: dict, doc_id: str, file_path: Path) -> list:
         elem_start = element.get("startIndex", 0)
         elem_end   = element.get("endIndex",   0)
 
-        text_parts = []
+        text_parts        = []
+        all_strikethrough = True
+        any_strikethrough = False
+        has_content       = False
+
         for pe in para.get("elements", []):
-            content = pe.get("textRun", {}).get("content", "").rstrip("\n")
-            if content:
-                text_parts.append(content)
+            tr      = pe.get("textRun", {})
+            content = tr.get("content", "").rstrip("\n")
+            if not content:
+                continue
+            has_content = True
+            text_parts.append(content)
+            if tr.get("textStyle", {}).get("strikethrough", False):
+                any_strikethrough = True
+            else:
+                all_strikethrough = False
 
         full_text = "".join(text_parts).strip()
         if not full_text or len(full_text) < 3:
             continue
 
+        # Detect if this paragraph is a native Google Docs checkbox (checklist) item
+        is_checkbox_item = False
+        if para.get("bullet"):
+            list_id_val = para["bullet"].get("listId", "")
+            nesting_lvl = para["bullet"].get("nestingLevel", 0)
+            nl_list = (
+                lists_info.get(list_id_val, {})
+                          .get("listProperties", {})
+                          .get("nestingLevels", [])
+            )
+            if nesting_lvl < len(nl_list):
+                is_checkbox_item = nl_list[nesting_lvl].get("glyphType", "") == "CHECKBOX"
+
+        # Completed if: all text runs have strikethrough (manual strike-through),
+        # OR it's a checklist item where Google Docs applied strikethrough to any run
+        # (Google Docs marks checked checkboxes by applying strikethrough to the text).
+        completed = has_content and (
+            all_strikethrough or (is_checkbox_item and any_strikethrough)
+        )
+
         n += 1
         all_paras.append({
-            "n":     n,
-            "text":  full_text,
-            "start": elem_start,
-            "end":   max(elem_start, elem_end - 1),
-            "bullet": para.get("bullet"),
+            "n":           n,
+            "text":        full_text,
+            "start":       elem_start,
+            "end":         max(elem_start, elem_end - 1),
+            "completed":   completed,
+            "is_checkbox": is_checkbox_item,
+            "bullet":      para.get("bullet"),
+            "list_id":     para.get("bullet", {}).get("listId", "") if para.get("bullet") else "",
         })
 
     if not all_paras:
@@ -608,15 +436,18 @@ def parse_google_doc(doc: dict, doc_id: str, file_path: Path) -> list:
         para_by_n = {p["n"]: p for p in all_paras}
         items     = []
         for r in llm_results:
-            para = para_by_n.get(r.get("p"))
+            pn   = r.get("p")
+            para = para_by_n.get(pn)
             if not para:
                 continue
             task_text = (r.get("task") or "").strip() or para["text"]
+            # Strikethrough in the doc always wins; LLM adds context-based completion
+            completed = para["completed"] or bool(r.get("done", False))
             category  = r.get("category", "Other")
             if category not in {"Holiday", "Work", "Finances", "Other"}:
                 category = "Other"
             item = _task_base(
-                file_path, task_text, "llm", False,
+                file_path, task_text, "llm", completed,
                 doc_id      = doc_id,
                 start_index = para["start"],
                 end_index   = para["end"],
@@ -637,7 +468,7 @@ def parse_google_doc(doc: dict, doc_id: str, file_path: Path) -> list:
         bullet       = para.get("bullet")
 
         if bullet:
-            list_id        = bullet.get("listId", "")
+            list_id        = para.get("list_id", "")
             nesting_level  = bullet.get("nestingLevel", 0)
             nesting_levels = (
                 lists_info.get(list_id, {})
@@ -661,13 +492,205 @@ def parse_google_doc(doc: dict, doc_id: str, file_path: Path) -> list:
 
         if pattern_type and task_text:
             items.append(_task_base(
-                file_path, task_text, pattern_type, False,
+                file_path, task_text, pattern_type, para["completed"],
                 doc_id      = doc_id,
                 start_index = para["start"],
                 end_index   = para["end"],
                 source_url  = source_url,
             ))
     return items
+
+
+# ── Google Doc writer (feature 3) ──────────────────────────────────────────────
+
+def sync_doc_strikethrough(doc_id: str, start_index: int, end_index: int,
+                            strikethrough: bool) -> bool:
+    """Apply or remove strikethrough on a paragraph range in a Google Doc."""
+    service = get_docs_service()
+    if not service or start_index is None or end_index is None:
+        return False
+    try:
+        service.documents().batchUpdate(
+            documentId=doc_id,
+            body={"requests": [{
+                "updateTextStyle": {
+                    "range": {"startIndex": start_index, "endIndex": end_index},
+                    "textStyle": {"strikethrough": strikethrough},
+                    "fields": "strikethrough",
+                }
+            }]},
+        ).execute()
+        return True
+    except Exception as e:
+        print(f"  ⚠  Could not update Google Doc: {e}")
+        return False
+
+
+def sync_doc_text(doc_id: str, start_index: int, end_index: int,
+                  new_text: str, is_completed: bool = False):
+    """Replace the text of a task paragraph in a Google Doc.
+
+    Deletes the existing content in [start_index, end_index) and inserts new_text.
+    If is_completed, also reapplies strikethrough to the new text so the doc stays
+    consistent with the completed state shown in the dashboard.
+
+    Returns the new end_index (start_index + len(new_text)) on success, or None on failure.
+    """
+    service = get_docs_service()
+    if not service or start_index is None or end_index is None:
+        return None
+    try:
+        requests = [
+            {
+                "deleteContentRange": {
+                    "range": {"startIndex": start_index, "endIndex": end_index}
+                }
+            },
+            {
+                "insertText": {
+                    "location": {"index": start_index},
+                    "text": new_text,
+                }
+            },
+        ]
+        new_end = start_index + len(new_text)
+        if is_completed:
+            # Reapply strikethrough so the doc reflects completed state
+            requests.append({
+                "updateTextStyle": {
+                    "range": {"startIndex": start_index, "endIndex": new_end},
+                    "textStyle": {"strikethrough": True},
+                    "fields": "strikethrough",
+                }
+            })
+        service.documents().batchUpdate(
+            documentId=doc_id,
+            body={"requests": requests},
+        ).execute()
+        return new_end
+    except Exception as e:
+        print(f"  ⚠  Could not update text in Google Doc: {e}")
+        return None
+
+
+_SECTION_DIVIDER_RE = re.compile(r"^──.*──$")
+
+
+def move_doc_item_to_section(doc_id: str, start_index: int, end_index: int,
+                             item_text: str, section_name: str) -> bool:
+    """Move a task paragraph to a named section (COMPLETED / REMOVED) at the bottom
+    of the Google Doc, creating the section heading if it doesn't exist yet.
+
+    Key behaviours:
+    - Re-discovers the item's CURRENT position by scanning the fresh doc for a
+      paragraph whose text matches item_text (closest to stored start_index).
+      This prevents corruption when stored indices are stale from earlier edits.
+    - Appends the item AFTER the last existing entry in the section (not right
+      after the heading) so multiple entries stack cleanly.
+    - Prefixes items with '• ' for a tidy log appearance.
+    - Falls back to stored indices if the text cannot be found in the doc.
+    """
+    service = get_docs_service()
+    if not service:
+        return False
+    heading = f"── {section_name} ──"
+    try:
+        doc     = service.documents().get(documentId=doc_id).execute()
+        content = doc.get("body", {}).get("content", [])
+
+        doc_end          = 1
+        heading_end      = None   # endIndex of the target heading paragraph
+        section_last_end = None   # endIndex of the last paragraph IN the section
+        in_target        = False  # are we currently inside the target section?
+
+        actual_start = None       # current startIndex of the item to move
+        actual_end   = None       # current endIndex-1 of the item to move
+        best_dist    = float("inf")
+
+        for elem in content:
+            elem_end = elem.get("endIndex", 0)
+            doc_end  = max(doc_end, elem_end)
+            para     = elem.get("paragraph")
+            if not para:
+                in_target = False
+                continue
+
+            raw = "".join(
+                pe.get("textRun", {}).get("content", "")
+                for pe in para.get("elements", [])
+            ).strip()
+
+            # ── Track target section boundaries ──────────────────────────────
+            if raw == heading:
+                heading_end      = elem_end
+                section_last_end = elem_end
+                in_target        = True
+            elif in_target:
+                if _SECTION_DIVIDER_RE.match(raw):
+                    in_target = False           # hit the next section
+                else:
+                    section_last_end = elem_end # extend section to this para
+
+            # ── Find the current position of the item to delete ──────────────
+            # Match against both the stored task text and the raw para text
+            # (LLM may have slightly reworded, so check raw too)
+            clean = raw.lstrip("•–- ").strip()
+            if raw == item_text or clean == item_text:
+                elem_s = elem.get("startIndex", 0)
+                dist   = abs(elem_s - (start_index or 0))
+                if dist < best_dist:
+                    best_dist    = dist
+                    actual_start = elem_s
+                    actual_end   = max(elem_s, elem_end - 1)
+
+        # Fall back to stored indices if the item text was not found in the doc
+        if actual_start is None:
+            if start_index is None or end_index is None:
+                print(f"  ⚠  Could not locate '{item_text[:50]}' in doc; skipping move")
+                return False
+            print(f"  ℹ  Text not found in doc — using stored indices as fallback")
+            actual_start = start_index
+            actual_end   = end_index
+
+        # ── Decide where to insert ───────────────────────────────────────────
+        if section_last_end is not None and section_last_end > actual_end:
+            # Section exists and its tail is below the item → append to section
+            insert_at   = section_last_end
+            insert_text = f"• {item_text}\n"
+        else:
+            # Section missing (or entirely above the item) → append at doc end
+            insert_at   = doc_end - 1   # just before the final sentinel \n
+            if heading_end is not None:
+                # Heading exists but is above the item — append item only
+                insert_text = f"• {item_text}\n"
+            else:
+                # No heading yet — create it with the first item
+                insert_text = f"\n{heading}\n• {item_text}\n"
+
+        if insert_at <= actual_end:
+            print(f"  ⚠  Cannot safely move item: insert_at={insert_at} <= actual_end={actual_end}")
+            return False
+
+        # Insert first (higher index), then delete original (lower index) — safe ordering
+        service.documents().batchUpdate(
+            documentId=doc_id,
+            body={"requests": [
+                {"insertText": {
+                    "location": {"index": insert_at},
+                    "text": insert_text,
+                }},
+                {"deleteContentRange": {
+                    "range": {
+                        "startIndex": actual_start,
+                        "endIndex":   actual_end + 1,  # +1 to include trailing \n
+                    },
+                }},
+            ]},
+        ).execute()
+        return True
+    except Exception as e:
+        print(f"  ⚠  Could not move item to '{section_name}': {e}")
+        return False
 
 
 def create_calendar_event(title: str, date_str: str, time_str: str,
@@ -855,29 +878,54 @@ def scan_all(existing_data: dict) -> tuple:
     return new_items, new_mtime_cache, cached_doc_ids
 
 
-def run_scan() -> dict:
-    """Scan Google Docs, upsert new tasks into Sheets, then sync Sheets → local cache."""
-    print("Scanning files…")
-    data = load_tasks()
-    new_scanned, new_mtime_cache, _ = scan_all(data)
+def merge(existing_data: dict, new_scanned: list, cached_doc_ids: set = None) -> list:
+    existing       = {item["id"]: item for item in existing_data.get("items", [])}
+    cached_doc_ids = cached_doc_ids or set()
+    merged         = []
+    seen           = set()
 
-    # Upsert only genuinely new items — never overwrite existing Sheets rows
+    # Add fresh scanned items, preserving completed/deleted state from existing
     for item in new_scanned:
-        item.setdefault("removed",    False)
-        item.setdefault("updated_at", datetime.now().isoformat())
-        sheets_upsert(item)
+        iid = item["id"]
+        if iid in existing:
+            old = existing[iid]
+            item["completed"]  = old["completed"]
+            item["deleted"]    = old["deleted"]
+            item["added_date"] = old["added_date"]
+            # Never overwrite a category that's already been set (by LLM or manually).
+            # The LLM only gets to assign it on the item's first appearance.
+            item["category"]   = old.get("category", item.get("category", "Other"))
+        merged.append(item)
+        seen.add(iid)
 
-    # Rebuild local cache from Sheets (Sheets is now source of truth)
-    sheets_sync_to_local()
+    # Re-add existing scanned items from unchanged (cached) docs
+    for item in existing_data.get("items", []):
+        if item["id"] in seen:
+            continue
+        if item.get("source") == "scanned" and item.get("doc_id") in cached_doc_ids:
+            merged.append(item)
+            seen.add(item["id"])
 
-    # Persist scan metadata (mtime cache + timestamp) to local JSON
-    data = load_tasks()
-    data["doc_mtime_cache"] = new_mtime_cache
-    data["last_scan"]       = datetime.now().isoformat()
+    # Always keep manual items
+    for item in existing_data.get("items", []):
+        if item.get("source") == "manual" and item["id"] not in seen:
+            merged.append(item)
+
+    return merged
+
+
+def run_scan() -> dict:
+    print("Scanning files…")
+    data                                    = load_tasks()
+    new_scanned, new_mtime_cache, cached_ids = scan_all(data)
+    data["items"]                           = merge(data, new_scanned, cached_ids)
+    data["doc_mtime_cache"]                 = new_mtime_cache
+    data["last_scan"]                       = datetime.now().isoformat()
     save_tasks(data)
-
-    active = sum(1 for i in data["items"] if not i.get("removed") and not i.get("deleted"))
-    print(f"Done — {active} active task(s)")
+    scanned = sum(1 for i in data["items"] if i["source"] == "scanned" and not i["deleted"])
+    manual  = sum(1 for i in data["items"] if i["source"] == "manual"  and not i["deleted"])
+    cached  = len(cached_ids)
+    print(f"Done — {scanned} scanned, {manual} manual ({cached} doc(s) served from cache)")
     return data
 
 
@@ -952,22 +1000,41 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(data)
             return
 
-        # Toggle complete / incomplete → writes to Sheets
+        # Toggle complete / incomplete  ── also syncs to Google Doc
         if re.match(r"^/api/tasks/[^/]+/toggle$", path):
             task_id = self.task_id_from_path()
             data    = load_tasks()
             for item in data["items"]:
                 if item["id"] == task_id:
-                    item["completed"]   = not item["completed"]
-                    item["updated_at"]  = datetime.now().isoformat()
-                    sheets_update_row(task_id, completed=item["completed"])
+                    item["completed"] = not item["completed"]
+
+                    synced = False
+                    if item["completed"]:
+                        # Marking DONE → move item to COMPLETED section in the doc
+                        doc_id = item.get("doc_id")
+                        s_idx  = item.get("doc_start_index")
+                        e_idx  = item.get("doc_end_index")
+                        if doc_id and s_idx is not None and e_idx is not None:
+                            synced = move_doc_item_to_section(
+                                doc_id, s_idx, e_idx, item["text"], "COMPLETED"
+                            )
+                            if synced:
+                                # Item no longer at its original position in the doc
+                                item["doc_start_index"] = None
+                                item["doc_end_index"]   = None
+                    # Toggling back to undone: one-way log — no doc change
+
                     save_tasks(data)
-                    self.send_json({"ok": True, "completed": item["completed"]})
+                    self.send_json({
+                        "ok":        True,
+                        "completed": item["completed"],
+                        "doc_synced": synced,
+                    })
                     return
             self.send_json({"error": "not found"}, 404)
             return
 
-        # Rename task text → writes to Sheets
+        # Edit task text  ── also syncs new text to Google Doc
         if re.match(r"^/api/tasks/[^/]+/edit$", path):
             task_id  = self.task_id_from_path()
             body     = self.read_body()
@@ -978,16 +1045,26 @@ class Handler(BaseHTTPRequestHandler):
             data = load_tasks()
             for item in data["items"]:
                 if item["id"] == task_id:
-                    item["text"]       = new_text
-                    item["updated_at"] = datetime.now().isoformat()
-                    sheets_update_row(task_id, text=new_text)
+                    item["text"] = new_text
+                    doc_id = item.get("doc_id")
+                    s_idx  = item.get("doc_start_index")
+                    e_idx  = item.get("doc_end_index")
+                    synced = False
+                    if doc_id and s_idx is not None and e_idx is not None:
+                        new_end = sync_doc_text(
+                            doc_id, s_idx, e_idx, new_text,
+                            is_completed=item.get("completed", False),
+                        )
+                        if new_end is not None:
+                            item["doc_end_index"] = new_end
+                            synced = True
                     save_tasks(data)
-                    self.send_json({"ok": True})
+                    self.send_json({"ok": True, "doc_synced": synced})
                     return
             self.send_json({"error": "not found"}, 404)
             return
 
-        # Update task category → writes to Sheets
+        # Update task category
         if re.match(r"^/api/tasks/[^/]+/category$", path):
             task_id  = self.task_id_from_path()
             body     = self.read_body()
@@ -998,9 +1075,7 @@ class Handler(BaseHTTPRequestHandler):
             data = load_tasks()
             for item in data["items"]:
                 if item["id"] == task_id:
-                    item["category"]   = category
-                    item["updated_at"] = datetime.now().isoformat()
-                    sheets_update_row(task_id, category=category)
+                    item["category"] = category
                     save_tasks(data)
                     self.send_json({"ok": True})
                     return
@@ -1024,16 +1099,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Could not create event — check Calendar API access"}, 500)
             return
 
-        # Add manual item → appends to Sheets then local cache
+        # Add manual item
         if path == "/api/tasks/add":
             body = self.read_body()
             text = body.get("text", "").strip()
             if not text:
                 self.send_json({"error": "empty text"}, 400)
                 return
-            now      = datetime.now()
+            data     = load_tasks()
             new_item = {
-                "id":              make_id("manual", text + now.isoformat()),
+                "id":              make_id("manual", text + datetime.now().isoformat()),
                 "text":            text,
                 "source":          "manual",
                 "source_file":     None,
@@ -1042,17 +1117,13 @@ class Handler(BaseHTTPRequestHandler):
                 "pattern_type":    "manual",
                 "completed":       False,
                 "deleted":         False,
-                "removed":         False,
-                "added_date":      now.strftime("%Y-%m-%d"),
-                "updated_at":      now.isoformat(),
+                "added_date":      datetime.now().strftime("%Y-%m-%d"),
                 "category":        "Other",
                 "doc_id":          None,
                 "doc_start_index": None,
                 "doc_end_index":   None,
                 "source_url":      None,
             }
-            sheets_upsert(new_item)
-            data = load_tasks()
             data["items"].append(new_item)
             save_tasks(data)
             self.send_json(new_item)
@@ -1073,13 +1144,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": "not found"}, 404)
                 return
 
-            # Mark removed in Sheets (row is never physically deleted — audit trail)
-            target["removed"]    = True
-            target["deleted"]    = True   # keeps dashboard filter working
-            target["updated_at"] = datetime.now().isoformat()
-            sheets_update_row(task_id, removed=True)
+            # Move to REMOVED section in the Google Doc (scanned items only)
+            synced = False
+            doc_id = target.get("doc_id")
+            s_idx  = target.get("doc_start_index")
+            e_idx  = target.get("doc_end_index")
+            if doc_id and s_idx is not None and e_idx is not None:
+                synced = move_doc_item_to_section(
+                    doc_id, s_idx, e_idx, target["text"], "REMOVED"
+                )
+
+            data["items"] = [i for i in data["items"] if i["id"] != task_id]
             save_tasks(data)
-            self.send_json({"ok": True})
+            self.send_json({"ok": True, "doc_synced": synced})
             return
 
         self.send_response(404); self.end_headers()
@@ -1088,12 +1165,8 @@ class Handler(BaseHTTPRequestHandler):
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
-    # Initialise Google auth (opens browser if token.json missing/stale)
+    # Initialise Google auth before scan so auth prompt happens first
     get_docs_service()
-
-    # Set up Sheets: write headers if blank, then migrate existing JSON items
-    sheets_init()
-    sheets_migrate_from_json()
 
     run_scan()
 
