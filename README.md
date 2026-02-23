@@ -56,7 +56,7 @@ NTFY_TOPIC=alex-tasks-alerts
 python3 check_alerts.py
 ```
 
-**Schedule it with cron** (fires at 09:00 every day):
+**Schedule it with cron** (fires at 07:00 every day):
 
 ```bash
 crontab -e
@@ -65,7 +65,7 @@ crontab -e
 Add this line (replace the path with your actual install location):
 
 ```
-0 9 * * * /usr/bin/python3 /path/to/admin-dashboard/check_alerts.py >> /tmp/dashboard_alerts.log 2>&1
+0 7 * * * /usr/bin/python3 /path/to/admin-dashboard/check_alerts.py >> /tmp/dashboard_alerts.log 2>&1
 ```
 
 Tasks overdue by 14+ days are sent at **high** priority in ntfy.
